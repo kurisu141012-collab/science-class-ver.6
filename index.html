@@ -1,0 +1,1858 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>理科授業リアルタイムシステム</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 直接PDFを生成してダウンロードするためのライブラリ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <!-- QRコード生成ライブラリ -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <!-- 端末間リアルタイム通信（PeerJS） -->
+  <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    details summary::-webkit-details-marker { display:none; }
+  </style>
+</head>
+<body class="bg-slate-100 min-h-screen text-slate-800 flex flex-col">
+
+  <!-- トースト通知コンテナ -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+
+  <!-- 親機ヘッダー -->
+  <header id="teacher-header" class="bg-teal-800 text-white p-3 shadow-md flex justify-between items-center sticky top-0 z-40 transition-all">
+    <div class="flex items-center gap-3">
+      <h1 class="text-lg font-bold flex items-center gap-2 cursor-pointer" onclick="goToLessonManager()">
+        🧪 <span>理科授業レスポンスシステム</span>
+      </h1>
+      <span id="header-lesson-badge" class="hidden text-xs bg-teal-900 border border-teal-600 px-2.5 py-1 rounded-full font-bold flex items-center gap-1">
+        <span id="header-grade-name">学年</span> / <span id="header-lesson-name">授業名</span>
+      </span>
+      <span id="current-mode-tag" class="hidden text-xs bg-teal-600 px-2.5 py-1 rounded-full font-bold">👤 個人ワーク</span>
+    </div>
+
+    <div class="flex items-center gap-2">
+      <div id="teacher-lesson-actions" class="hidden flex items-center gap-2">
+        <button onclick="copyCurrentStudentUrl()" class="px-2.5 py-1 bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs rounded shadow flex items-center gap-1 transition border border-teal-500">
+          📋 <span>子機リンク</span>
+        </button>
+        <button onclick="showQrModalForCurrentLesson()" class="px-2.5 py-1 bg-teal-700 hover:bg-teal-600 text-white font-bold text-xs rounded shadow flex items-center gap-1 transition border border-teal-500">
+          📱 <span>QR表示</span>
+        </button>
+        <button onclick="goToLessonManager()" class="px-3 py-1 bg-teal-900 hover:bg-teal-950 text-teal-100 font-bold text-xs rounded shadow flex items-center gap-1 transition ml-2 border border-teal-700">
+          📁 <span>授業一覧に戻る</span>
+        </button>
+      </div>
+
+      <div id="teacher-manager-actions" class="flex items-center gap-2">
+        <button onclick="openPasscodeModal()" class="px-2.5 py-1 bg-teal-900 hover:bg-teal-950 text-teal-200 font-bold text-xs rounded border border-teal-700 transition flex items-center gap-1">
+          🔒 <span>暗証番号設定</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- 子機ヘッダー -->
+  <header id="student-header" class="hidden bg-teal-800 text-white p-3 shadow-md flex justify-between items-center sticky top-0 z-40">
+    <div class="flex items-center gap-2">
+      <span class="text-xl">🧪</span>
+      <div>
+        <h1 class="text-sm sm:text-base font-bold leading-tight" id="student-header-title">理科授業レスポンス</h1>
+        <div class="text-[11px] text-teal-200" id="student-header-subtitle">回答システム</div>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <span id="student-connection-status" class="text-xs bg-amber-500 text-white px-2 py-0.5 rounded font-bold">接続試行中...</span>
+      <span id="student-header-mode-badge" class="text-xs bg-teal-600 px-2.5 py-1 rounded-full font-bold">👤 個人ワーク</span>
+    </div>
+  </header>
+
+  <!-- メインコンテンツ領域 -->
+  <main class="flex-1 max-w-[1400px] w-full mx-auto p-3 sm:p-4">
+
+    <!-- VIEW 1: 親機 - 授業マネージャー -->
+    <div id="view-lesson-manager" class="space-y-5">
+      <div class="bg-white p-5 rounded-xl shadow-sm border border-slate-200 flex flex-wrap justify-between items-center gap-4">
+        <div>
+          <h2 class="text-xl font-bold text-teal-950 flex items-center gap-2">
+            <span>📚 学年別 授業フォルダ管理</span>
+          </h2>
+          <p class="text-xs text-slate-500 mt-1">
+            学年ごとのフォルダで授業を整理できます。「子機QRコード」を生徒の端末カメラで読み取って接続します。
+          </p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button onclick="openNewLessonModal()" class="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-lg shadow text-sm transition flex items-center gap-2">
+            <span class="text-base">➕</span> <span>新規授業を作成</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-2">
+        <div class="flex items-center justify-between border-b pb-2 px-2">
+          <span class="text-xs font-bold text-slate-500 flex items-center gap-1">
+            📁 学年フォルダを選択:
+          </span>
+          <button onclick="openAddGradeModal()" class="text-xs text-teal-700 hover:text-teal-900 font-bold flex items-center gap-1 py-1 px-2 rounded hover:bg-teal-50 transition">
+            ➕ 学年フォルダを追加
+          </button>
+        </div>
+        <div id="grade-tabs-list" class="flex flex-wrap gap-2 pt-2 px-1"></div>
+      </div>
+
+      <div class="space-y-3">
+        <div class="flex flex-wrap justify-between items-center gap-3">
+          <div class="flex items-center gap-2">
+            <h3 id="current-grade-heading" class="text-base font-bold text-slate-700 flex items-center gap-1">
+              <span>📂</span> <span id="current-grade-name-label">中学2年</span> の授業一覧
+            </h3>
+            <span id="current-grade-count" class="text-xs bg-slate-200 text-slate-700 font-bold px-2 py-0.5 rounded-full">0件</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <input type="text" id="lesson-search-input" oninput="renderLessonCards()" placeholder="授業名で検索..." class="p-2 border rounded-lg text-xs bg-white w-48 sm:w-64 focus:outline-none focus:ring-2 focus:ring-teal-500">
+            <button onclick="editCurrentGradeModal()" title="この学年フォルダの名前を変更・削除" class="text-slate-400 hover:text-slate-600 text-xs p-2 rounded hover:bg-slate-200">
+              ⚙️ フォルダ設定
+            </button>
+          </div>
+        </div>
+
+        <div id="lesson-cards-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4"></div>
+
+        <div id="lesson-empty-placeholder" class="hidden bg-white rounded-xl border-2 border-dashed border-slate-300 p-12 text-center space-y-3">
+          <div class="text-4xl">🧪</div>
+          <div class="font-bold text-slate-700">この学年フォルダにはまだ授業がありません</div>
+          <p class="text-xs text-slate-400 max-w-md mx-auto">
+            「新規授業を作成」ボタンを押して、最初の授業を作ってみましょう。
+          </p>
+          <button onclick="openNewLessonModal()" class="bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2 rounded-lg shadow text-xs transition inline-flex items-center gap-1">
+            ➕ この学年に授業を作成する
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 2: 親機 - 授業操作画面 -->
+    <div id="view-teacher-lesson" class="hidden space-y-4">
+      <div id="teacher-controls" class="bg-white p-4 rounded-xl shadow border-t-4 border-teal-600 space-y-3 transition-all">
+        <div class="flex flex-wrap items-center justify-between gap-3 pb-2 border-b">
+          <div class="flex items-center gap-3">
+            <button onclick="goToLessonManager()" class="text-xs text-teal-700 hover:text-teal-900 font-bold flex items-center gap-1">
+              ← 授業フォルダ
+            </button>
+            <span class="text-slate-300">|</span>
+            <div class="font-bold text-slate-800 text-base" id="active-lesson-title">授業名</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="teacher-peer-count" class="text-xs px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full font-bold">生徒接続: 0名</span>
+            <span id="teacher-status-badge" class="text-xs px-3 py-1 bg-yellow-100 text-yellow-800 rounded-full font-bold">待機中</span>
+            <span class="text-sm font-bold text-slate-600">提出: <strong id="submit-count" class="text-teal-700 text-xl">0</strong> 件</span>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-bold text-slate-600">授業フェーズ切替:</span>
+            <button onclick="setMode('individual')" id="mode-btn-ind" class="px-3 py-1.5 rounded-lg text-sm font-bold bg-teal-700 text-white shadow">👤 個人ワーク</button>
+            <button onclick="setMode('group')" id="mode-btn-grp" class="px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-200 text-slate-700 hover:bg-slate-300">👥 班活動（子機も自動連動）</button>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button onclick="copyCurrentStudentUrl()" class="px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm">
+              📋 子機リンクをコピー
+            </button>
+            <button onclick="showQrModalForCurrentLesson()" class="px-3 py-1.5 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm">
+              📱 子機QRコード表示
+            </button>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap gap-2 items-center pt-2 border-t">
+          <button onclick="toggleAccepting(true)" id="btn-start" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-lg shadow text-sm transition">
+            📢 受付開始
+          </button>
+          <button onclick="toggleAccepting(false)" id="btn-stop" class="bg-rose-600 hover:bg-rose-700 text-white font-bold px-4 py-2 rounded-lg shadow text-sm transition">
+            🛑 強制締め切り
+          </button>
+          <button onclick="toggleTvMode(true)" class="bg-sky-600 hover:bg-sky-700 text-white font-bold px-4 py-2 rounded-lg shadow text-sm transition flex items-center gap-1">
+            📺 TV投影モード
+          </button>
+          <button onclick="downloadPdfReport()" id="btn-pdf" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-4 py-2 rounded-lg shadow text-sm transition flex items-center gap-1">
+            📥 PDF直接ダウンロード
+          </button>
+          <button onclick="resetDataConfirm()" class="bg-slate-400 hover:bg-slate-500 text-white font-bold px-3 py-2 rounded-lg shadow text-xs ml-auto transition">
+            🗑️ 回答リセット
+          </button>
+        </div>
+
+        <details class="bg-slate-50 p-4 rounded-lg border text-sm" id="editor-details">
+          <summary class="font-bold cursor-pointer text-teal-800 select-none">
+            ⚙️ 問題・模範解答・ヒントカードの編集（クリックで開閉）
+          </summary>
+          <div class="mt-4 space-y-4" id="questions-editor-list"></div>
+          <div class="mt-3 flex gap-2">
+            <button onclick="addQuestion()" class="bg-teal-100 text-teal-800 px-3 py-1 rounded font-bold hover:bg-teal-200">+ 小問を追加</button>
+          </div>
+          <div class="mt-6 pt-4 border-t border-slate-300">
+            <div class="flex justify-between items-center mb-2">
+              <span class="font-bold text-amber-800">💡 班活動用ヒントカードの設定</span>
+              <button onclick="addHint()" class="bg-amber-100 text-amber-800 px-3 py-1 rounded text-xs font-bold hover:bg-amber-200">+ ヒントを追加</button>
+            </div>
+            <div id="hints-editor-list" class="space-y-3"></div>
+          </div>
+          <div class="mt-5 pt-3 border-t flex justify-end">
+            <button onclick="saveAndBroadcastSettings()" class="bg-teal-700 text-white px-5 py-2 rounded-lg font-bold hover:bg-teal-800 shadow">設定を保存して生徒に配信</button>
+          </div>
+        </details>
+      </div>
+
+      <div id="tv-exit-bar" class="hidden flex justify-between items-center bg-teal-950 text-white px-5 py-2.5 rounded-lg shadow-lg">
+        <span class="text-sm font-bold text-teal-200">📺 TV投影中（生徒の名前は非表示・着順のみ表示中）</span>
+        <button onclick="toggleTvMode(false)" class="bg-white text-teal-900 px-4 py-1 rounded font-bold text-sm hover:bg-slate-100 shadow">
+          ✖ 操作パネルに戻る
+        </button>
+      </div>
+
+      <div id="teacher-tabs" class="flex border-b border-slate-300 gap-2">
+        <button onclick="switchTeacherTab('screen')" id="tab-btn-screen" class="px-4 py-2 font-bold text-teal-800 border-b-2 border-teal-700 bg-white rounded-t-md text-sm">
+          🖥️ 全体一覧スクリーン
+        </button>
+        <button onclick="switchTeacherTab('by-question')" id="tab-btn-by-question" class="px-4 py-2 font-bold text-slate-500 hover:text-slate-800 rounded-t-md text-sm">
+          📊 問題ごとの集計・比較
+        </button>
+        <button onclick="switchTeacherTab('individual')" id="tab-btn-individual" class="px-4 py-2 font-bold text-slate-500 hover:text-slate-800 rounded-t-md text-sm">
+          🔍 個別確認
+        </button>
+      </div>
+
+      <div id="tab-screen" class="bg-white p-5 rounded-xl shadow space-y-3 min-h-[600px]">
+        <div class="flex justify-between items-center border-b pb-2">
+          <h2 id="screen-title" class="font-bold text-slate-800 text-base flex items-center gap-2">
+            🖥️ <span id="screen-title-text">クラス全体の回答状況（40人対応 5×8表示）</span>
+          </h2>
+          <span id="screen-hint-text" class="text-xs text-slate-400">※カードをクリックすると個別確認できます</span>
+        </div>
+        <div id="grid-main-screen" class="grid grid-cols-5 gap-2.5"></div>
+      </div>
+
+      <div id="tab-by-question" class="hidden bg-white p-5 rounded-xl shadow space-y-6">
+        <div class="flex justify-between items-center border-b pb-3">
+          <h2 class="font-bold text-slate-800 text-lg">📊 問題ごとの回答集計・比較</h2>
+          <span class="text-xs text-slate-500">小問ごとに回答・写真を横断して比較できます</span>
+        </div>
+        <div id="by-question-content" class="space-y-8"></div>
+      </div>
+
+      <div id="tab-individual" class="hidden bg-white p-5 rounded-xl shadow space-y-4">
+        <div class="flex items-center gap-3">
+          <label class="font-bold text-sm text-slate-600">表示対象:</label>
+          <select id="teacher-student-select" onchange="renderIndividualDetail()" class="p-2 border rounded-lg bg-slate-50 text-sm w-60">
+            <option value="">選択してください</option>
+          </select>
+        </div>
+        <div id="teacher-individual-detail" class="p-4 bg-slate-50 rounded-lg border min-h-[200px] text-slate-400">
+          生徒または班を選択すると、全問の記述内容と写真が大きく表示されます。
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW 3: 子機（生徒画面） -->
+    <div id="view-student" class="hidden max-w-2xl mx-auto space-y-6">
+      <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex justify-between items-center">
+        <div>
+          <span class="text-[10px] font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200" id="student-view-grade">理科</span>
+          <h2 class="text-base font-bold text-slate-800 mt-1" id="student-view-title">理科授業</h2>
+        </div>
+        <span id="student-status-badge" class="text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600">待機中</span>
+      </div>
+
+      <div id="student-waiting-card" class="bg-white p-10 rounded-xl shadow text-center py-16">
+        <div class="text-5xl mb-4">🧪</div>
+        <h2 class="text-xl font-bold text-slate-700 mb-2">先生の合図を待っています...</h2>
+        <p class="text-slate-500 text-sm">問題が配信されると自動で回答画面に切り替わります。</p>
+      </div>
+
+      <div id="student-form-card" class="hidden bg-white p-6 rounded-xl shadow space-y-6">
+        <div class="border-b pb-3">
+          <div class="flex justify-between items-center mb-2">
+            <h2 id="student-form-title" class="text-lg font-bold text-teal-900">理科の回答を入力</h2>
+            <span id="student-mode-badge" class="text-xs bg-teal-100 text-teal-800 px-2.5 py-0.5 rounded-full font-bold">個人ワーク</span>
+          </div>
+          <div id="student-name-container" class="mt-2"></div>
+        </div>
+
+        <div id="student-hints-container" class="hidden space-y-3">
+          <div class="flex items-center gap-1 text-sm font-bold text-amber-800">
+            <span>💡 班活動ヒントカード（タップして確認）</span>
+          </div>
+          <div id="student-hints-list" class="grid grid-cols-1 sm:grid-cols-2 gap-2"></div>
+        </div>
+
+        <div id="student-questions-container" class="space-y-6"></div>
+
+        <button onclick="submitStudentResponse(false)" id="btn-submit-student" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-3 rounded-xl shadow-lg transition">
+          回答を送信する
+        </button>
+      </div>
+
+      <div id="student-peer-review-card" class="hidden bg-white p-6 rounded-xl shadow space-y-4">
+        <div class="bg-emerald-50 border-l-4 border-emerald-600 p-4 rounded flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div class="font-bold text-emerald-900" id="peer-review-title">✅ あなたの回答は送信されました！</div>
+            <div class="text-xs text-emerald-700 mt-0.5" id="peer-review-status-text">クラスの回答を参考に見てみましょう</div>
+          </div>
+          <button onclick="editMyAnswer()" id="btn-edit-answer" class="bg-white border-2 border-emerald-600 text-emerald-800 font-bold px-4 py-1.5 rounded-lg text-sm hover:bg-emerald-100 shadow-sm transition">
+            ✏️ 回答を修正する
+          </button>
+        </div>
+        <h3 class="font-bold text-slate-800 pt-2" id="peer-list-title">👥 クラスの回答一覧</h3>
+        <div id="student-peer-grid" class="space-y-4"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- モーダル群 -->
+  <div id="modal-new-lesson" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-6 space-y-4">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h3 class="font-bold text-slate-800 text-lg flex items-center gap-2">
+          <span>➕</span> <span>新しい授業を作成</span>
+        </h3>
+        <button onclick="closeModal('modal-new-lesson')" class="text-slate-400 hover:text-slate-600 text-xl font-bold">&times;</button>
+      </div>
+      <div class="space-y-3">
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">学年フォルダ:</label>
+          <select id="new-lesson-grade" class="w-full p-2 border rounded-lg text-sm bg-slate-50 font-bold text-teal-800"></select>
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">授業名（単元・実験テーマ）:</label>
+          <input type="text" id="new-lesson-title" placeholder="例: 酸化銅の還元実験と考察" class="w-full p-2 border rounded-lg text-sm">
+        </div>
+        <div>
+          <label class="block text-xs font-bold text-slate-600 mb-1">初期テンプレート:</label>
+          <select id="new-lesson-template" class="w-full p-2 border rounded-lg text-xs bg-slate-50">
+            <option value="science_standard">理科標準（個人ワーク2問＋班活動1問＋ヒント3枚）</option>
+            <option value="empty">白紙（設問を自分で1から作る）</option>
+          </select>
+        </div>
+      </div>
+      <div class="pt-3 border-t flex justify-end gap-2">
+        <button onclick="closeModal('modal-new-lesson')" class="px-4 py-2 border rounded-lg text-xs text-slate-600 hover:bg-slate-50 font-bold">キャンセル</button>
+        <button onclick="confirmCreateLesson()" class="px-4 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold shadow">授業を作成</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-add-grade" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h3 class="font-bold text-slate-800 text-base flex items-center gap-1">
+          <span>📁</span> <span>学年フォルダを追加</span>
+        </h3>
+        <button onclick="closeModal('modal-add-grade')" class="text-slate-400 hover:text-slate-600 font-bold">&times;</button>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-600 mb-1">学年・フォルダ名:</label>
+        <input type="text" id="new-grade-name-input" placeholder="例: 中学3年、高校化学、特設講座" class="w-full p-2 border rounded-lg text-sm">
+      </div>
+      <div class="flex justify-end gap-2 pt-2 border-t">
+        <button onclick="closeModal('modal-add-grade')" class="px-3 py-1.5 border rounded-lg text-xs font-bold text-slate-600">キャンセル</button>
+        <button onclick="confirmAddGrade()" class="px-4 py-1.5 bg-teal-700 text-white rounded-lg text-xs font-bold hover:bg-teal-800">追加</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-edit-grade" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h3 class="font-bold text-slate-800 text-base">⚙️ フォルダ設定</h3>
+        <button onclick="closeModal('modal-edit-grade')" class="text-slate-400 hover:text-slate-600 font-bold">&times;</button>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-600 mb-1">フォルダ名:</label>
+        <input type="text" id="edit-grade-name-input" class="w-full p-2 border rounded-lg text-sm">
+      </div>
+      <div class="flex justify-between items-center pt-2 border-t">
+        <button onclick="confirmDeleteGrade()" class="px-3 py-1.5 bg-rose-50 text-rose-600 border border-rose-200 rounded-lg text-xs font-bold hover:bg-rose-100">
+          フォルダ削除
+        </button>
+        <div class="flex gap-2">
+          <button onclick="closeModal('modal-edit-grade')" class="px-3 py-1.5 border rounded-lg text-xs font-bold text-slate-600">キャンセル</button>
+          <button onclick="confirmUpdateGradeName()" class="px-4 py-1.5 bg-teal-700 text-white rounded-lg text-xs font-bold hover:bg-teal-800">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- QRコード表示モーダル -->
+  <div id="modal-qr-code" class="hidden fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-center space-y-4">
+      <div class="flex justify-between items-start">
+        <div class="text-left">
+          <span id="modal-qr-grade" class="text-xs font-bold text-teal-700 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">学年</span>
+          <h3 id="modal-qr-title" class="font-bold text-slate-800 text-lg mt-1">授業タイトル</h3>
+        </div>
+        <button onclick="closeModal('modal-qr-code')" class="text-slate-400 hover:text-slate-600 text-2xl font-bold">&times;</button>
+      </div>
+
+      <div class="bg-slate-50 p-4 rounded-xl border flex flex-col items-center justify-center">
+        <div id="qrcode-container" class="p-3 bg-white rounded-lg shadow-sm border flex items-center justify-center min-w-[200px] min-h-[200px]"></div>
+        <p class="text-xs text-slate-600 mt-3 font-bold">
+          📱 生徒のタブレットやスマホのカメラでスキャンしてください
+        </p>
+      </div>
+
+      <div class="space-y-2 text-left">
+        <label class="block text-xs font-bold text-slate-600">生徒（子機）用URL:</label>
+        <div class="flex gap-2">
+          <input type="text" id="modal-qr-url-input" readonly class="w-full p-2 bg-slate-100 border rounded-lg text-xs select-all text-slate-600 font-mono">
+          <button onclick="copyModalQrUrl()" class="px-3 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-lg text-xs font-bold whitespace-nowrap shadow transition">
+            コピー
+          </button>
+        </div>
+      </div>
+
+      <div class="pt-2">
+        <button onclick="closeModal('modal-qr-code')" class="w-full py-2.5 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-xs font-bold transition">
+          閉じる
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-passcode-setting" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h3 class="font-bold text-slate-800 text-base">🔒 教師用暗証番号の設定</h3>
+        <button onclick="closeModal('modal-passcode-setting')" class="text-slate-400 hover:text-slate-600 font-bold">&times;</button>
+      </div>
+      <div>
+        <label class="block text-xs font-bold text-slate-600 mb-1">新しい暗証番号（4桁以上）:</label>
+        <input type="password" id="input-new-passcode" placeholder="例: 1234" class="w-full p-2 border rounded-lg text-sm text-center tracking-widest font-mono">
+      </div>
+      <div class="flex justify-end gap-2 pt-2 border-t">
+        <button onclick="closeModal('modal-passcode-setting')" class="px-3 py-1.5 border rounded-lg text-xs font-bold text-slate-600">キャンセル</button>
+        <button onclick="saveNewPasscode()" class="px-4 py-1.5 bg-teal-700 text-white rounded-lg text-xs font-bold hover:bg-teal-800">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-edit-lesson-title" class="hidden fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-5 space-y-4">
+      <div class="flex justify-between items-center border-b pb-2">
+        <h3 class="font-bold text-slate-800 text-base">✏️ 授業名の変更</h3>
+        <button onclick="closeModal('modal-edit-lesson-title')" class="text-slate-400 hover:text-slate-600 font-bold">&times;</button>
+      </div>
+      <div>
+        <input type="text" id="edit-lesson-title-input" class="w-full p-2 border rounded-lg text-sm">
+      </div>
+      <div class="flex justify-end gap-2 pt-2 border-t">
+        <button onclick="closeModal('modal-edit-lesson-title')" class="px-3 py-1.5 border rounded-lg text-xs font-bold text-slate-600">キャンセル</button>
+        <button onclick="confirmUpdateLessonTitle()" class="px-4 py-1.5 bg-teal-700 text-white rounded-lg text-xs font-bold hover:bg-teal-800">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- PDF生成専用コンテナ -->
+  <div id="pdf-export-container" class="hidden bg-white p-8 text-black" style="width: 800px;"></div>
+
+  <!-- システム制御スクリプト -->
+  <script>
+    const STORAGE_KEY_STORE = 'science_classroom_system_v5_store';
+
+    let appStore = {
+      passcode: '1234',
+      currentGradeId: 'grade_2',
+      grades: [
+        { id: 'grade_1', name: '中学1年' },
+        { id: 'grade_2', name: '中学2年' },
+        { id: 'grade_3', name: '中学3年' }
+      ],
+      lessons: [
+        {
+          id: 'lesson_mg_combustion',
+          gradeId: 'grade_2',
+          title: 'マグネシウムの燃焼と酸化（質量変化の規則性）',
+          createdAt: new Date().toLocaleDateString('ja-JP'),
+          state: {
+            mode: 'individual',
+            isAccepting: false,
+            individualQuestions: [
+              { id: 1, text: "問1: マグネシウムを加熱したときの変化と、できた物質の名前を答えなさい。", modelAnswer: "白く激しく光を放って燃え、白色の粉末（酸化マグネシウム）ができる。" },
+              { id: 2, text: "問2: 加熱前と加熱後の重さを比べるとどうなるか。理由とともに説明しなさい。", modelAnswer: "空気中の酸素がマグネシウムと化合するため、加熱後の方が重くなる。" }
+            ],
+            groupQuestions: [
+              { id: 101, text: "【班の課題】金属の酸化実験で「結びつく酸素の質量比」をグラフから読み取り、考察をまとめなさい。", modelAnswer: "マグネシウムと酸素は 3:2 の質量比で化合する。" }
+            ],
+            hints: [
+              { id: 1, title: "ヒント 1: グラフの着眼点", text: "マグネシウムが 0.3g のとき、できた酸化マグネシウムは何gになっていますか？差を計算してみよう。" },
+              { id: 2, title: "ヒント 2: 化合する酸素の求め方", text: "（加熱後の質量）ー（加熱前のマグネシウムの質量）＝（結びついた酸素の質量）です。" },
+              { id: 3, title: "ヒント 3: 整数の比に直す", text: "マグネシウム 0.6g に対し、酸素は 0.4g 結びつきます。最も簡単な整数の比に直すと...？" }
+            ],
+            answers: []
+          }
+        }
+      ]
+    };
+
+    let activeLessonId = null;
+    let peer = null;
+    let teacherConnections = []; // 教師側：接続している生徒のDataConnection一覧
+    let studentConnection = null; // 生徒側：教師へのDataConnection
+
+    let studentHasSubmitted = false;
+    let tempPhotos = {};
+    let isTvModeActive = false;
+    let editingLessonIdForTitle = null;
+
+    let mySubmissionId = localStorage.getItem('my_submission_id');
+    if (!mySubmissionId) {
+      mySubmissionId = 'sub_' + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem('my_submission_id', mySubmissionId);
+    }
+    let lastMyAnswer = null;
+
+    // =========================================================
+    // 起動・初期化処理
+    // =========================================================
+    window.addEventListener('DOMContentLoaded', () => {
+      loadStore();
+
+      const params = new URLSearchParams(window.location.search);
+      const urlLessonId = params.get('lesson');
+      const urlRole = params.get('role');
+
+      if (urlLessonId && urlRole === 'student') {
+        // 生徒（子機）として起動
+        activeLessonId = urlLessonId;
+        openStudentView(urlLessonId);
+        initStudentPeer(urlLessonId);
+      } else {
+        // 教師（親機）として起動
+        goToLessonManager();
+      }
+    });
+
+    function loadStore() {
+      const saved = localStorage.getItem(STORAGE_KEY_STORE);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          if (parsed && Array.isArray(parsed.lessons)) {
+            appStore = parsed;
+          }
+        } catch(e) {
+          console.error("Failed to load store", e);
+        }
+      }
+    }
+
+    function saveStore() {
+      localStorage.setItem(STORAGE_KEY_STORE, JSON.stringify(appStore));
+    }
+
+    function getActiveLesson() {
+      if (!activeLessonId) return null;
+      return appStore.lessons.find(l => l.id === activeLessonId) || null;
+    }
+
+    function getActiveGrade() {
+      return appStore.grades.find(g => g.id === appStore.currentGradeId) || appStore.grades[0];
+    }
+
+    // =========================================================
+    // 端末間通信（PeerJS P2P）処理
+    // =========================================================
+    function getTeacherPeerId(lessonId) {
+      // 授業固有の接続IDを定義
+      return 'sci_room_' + lessonId.replace(/[^a-zA-Z0-9]/g, '');
+    }
+
+    function initTeacherPeer(lessonId) {
+      if (peer) {
+        peer.destroy();
+      }
+      teacherConnections = [];
+      const teacherPeerId = getTeacherPeerId(lessonId);
+
+      peer = new Peer(teacherPeerId);
+
+      peer.on('open', (id) => {
+        console.log('Teacher Peer ready:', id);
+        updateTeacherPeerCount();
+      });
+
+      peer.on('connection', (conn) => {
+        teacherConnections.push(conn);
+        updateTeacherPeerCount();
+
+        // 接続直後に現在の授業状態を送信
+        conn.on('open', () => {
+          const lesson = getActiveLesson();
+          if (lesson) {
+            conn.send({ type: 'SYNC', payload: lesson.state, title: lesson.title });
+          }
+        });
+
+        conn.on('data', (data) => {
+          if (data.type === 'STUDENT_SUBMIT') {
+            handleStudentSubmission(data.payload);
+          }
+        });
+
+        conn.on('close', () => {
+          teacherConnections = teacherConnections.filter(c => c !== conn);
+          updateTeacherPeerCount();
+        });
+      });
+
+      peer.on('error', (err) => {
+        console.error('Teacher Peer Error:', err);
+      });
+    }
+
+    function updateTeacherPeerCount() {
+      const badge = document.getElementById('teacher-peer-count');
+      if (badge) {
+        badge.textContent = `生徒接続: ${teacherConnections.length}名`;
+      }
+    }
+
+    function broadcastToStudents(messageObj) {
+      teacherConnections.forEach(conn => {
+        if (conn.open) {
+          conn.send(messageObj);
+        }
+      });
+    }
+
+    function initStudentPeer(lessonId) {
+      if (peer) {
+        peer.destroy();
+      }
+      peer = new Peer();
+
+      peer.on('open', () => {
+        connectToTeacher(lessonId);
+      });
+
+      peer.on('error', (err) => {
+        console.error('Student Peer Error:', err);
+        const statusBadge = document.getElementById('student-connection-status');
+        if (statusBadge) {
+          statusBadge.textContent = '接続エラー';
+          statusBadge.className = 'text-xs bg-rose-600 text-white px-2 py-0.5 rounded font-bold';
+        }
+      });
+    }
+
+    function connectToTeacher(lessonId) {
+      const targetId = getTeacherPeerId(lessonId);
+      studentConnection = peer.connect(targetId, { reliable: true });
+
+      const statusBadge = document.getElementById('student-connection-status');
+
+      studentConnection.on('open', () => {
+        if (statusBadge) {
+          statusBadge.textContent = '接続完了';
+          statusBadge.className = 'text-xs bg-emerald-600 text-white px-2 py-0.5 rounded font-bold';
+        }
+      });
+
+      studentConnection.on('data', (data) => {
+        if (data.type === 'SYNC') {
+          let lesson = getActiveLesson();
+          if (!lesson) {
+            lesson = {
+              id: lessonId,
+              title: data.title || '理科授業',
+              gradeId: 'grade_2',
+              state: data.payload
+            };
+            appStore.lessons.push(lesson);
+          } else {
+            const prevMode = lesson.state.mode;
+            lesson.state = data.payload;
+            if (prevMode !== lesson.state.mode) {
+              studentHasSubmitted = false;
+              tempPhotos = {};
+              lastMyAnswer = null;
+            }
+          }
+          document.getElementById('student-view-title').textContent = lesson.title;
+          document.getElementById('student-header-title').textContent = lesson.title;
+          updateStudentViews();
+        } else if (data.type === 'FORCE_CLOSE_COLLECT') {
+          if (!studentHasSubmitted) {
+            submitStudentResponse(true);
+          }
+        }
+      });
+
+      studentConnection.on('close', () => {
+        if (statusBadge) {
+          statusBadge.textContent = '切断されました';
+          statusBadge.className = 'text-xs bg-slate-500 text-white px-2 py-0.5 rounded font-bold';
+        }
+      });
+    }
+
+    function handleStudentSubmission(newAns) {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const existingIndex = lesson.state.answers.findIndex(a => a.mode === newAns.mode && a.submissionKey === newAns.submissionKey);
+      if (existingIndex !== -1) {
+        lesson.state.answers[existingIndex] = newAns;
+      } else {
+        lesson.state.answers.push(newAns);
+      }
+      saveStore();
+      broadcastLessonState();
+      updateTeacherViews();
+    }
+
+    function broadcastLessonState() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      saveStore();
+      broadcastToStudents({ type: 'SYNC', payload: lesson.state, title: lesson.title });
+      updateAllDisplays();
+    }
+
+    // =========================================================
+    // 画面遷移
+    // =========================================================
+    function hideAllViews() {
+      document.getElementById('view-lesson-manager').classList.add('hidden');
+      document.getElementById('view-teacher-lesson').classList.add('hidden');
+      document.getElementById('view-student').classList.add('hidden');
+      document.getElementById('teacher-header').classList.add('hidden');
+      document.getElementById('student-header').classList.add('hidden');
+    }
+
+    function goToLessonManager() {
+      hideAllViews();
+      document.getElementById('teacher-header').classList.remove('hidden');
+      document.getElementById('view-lesson-manager').classList.remove('hidden');
+      
+      document.getElementById('header-lesson-badge').classList.add('hidden');
+      document.getElementById('current-mode-tag').classList.add('hidden');
+      document.getElementById('teacher-lesson-actions').classList.add('hidden');
+      document.getElementById('teacher-manager-actions').classList.remove('hidden');
+
+      renderGradeTabs();
+      renderLessonCards();
+
+      if (window.history.pushState) {
+        window.history.pushState(null, '', window.location.pathname);
+      }
+    }
+
+    function openTeacherLessonView(lessonId) {
+      activeLessonId = lessonId;
+      initTeacherPeer(lessonId);
+
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const grade = appStore.grades.find(g => g.id === lesson.gradeId);
+
+      hideAllViews();
+      document.getElementById('teacher-header').classList.remove('hidden');
+      document.getElementById('view-teacher-lesson').classList.remove('hidden');
+
+      document.getElementById('header-lesson-badge').classList.remove('hidden');
+      document.getElementById('current-mode-tag').classList.remove('hidden');
+      document.getElementById('header-grade-name').textContent = grade ? grade.name : '';
+      document.getElementById('header-lesson-name').textContent = lesson.title;
+      document.getElementById('active-lesson-title').textContent = lesson.title;
+
+      document.getElementById('teacher-lesson-actions').classList.remove('hidden');
+      document.getElementById('teacher-manager-actions').classList.add('hidden');
+
+      renderTeacherQuestionEditor();
+      renderTeacherHintsEditor();
+      updateAllDisplays();
+    }
+
+    function openStudentView(lessonId) {
+      activeLessonId = lessonId;
+      hideAllViews();
+      document.getElementById('view-student').classList.remove('hidden');
+      document.getElementById('student-header').classList.remove('hidden');
+      updateStudentViews();
+    }
+
+    // =========================================================
+    // 学年フォルダ＆授業管理
+    // =========================================================
+    function renderGradeTabs() {
+      const container = document.getElementById('grade-tabs-list');
+      container.innerHTML = appStore.grades.map(g => {
+        const isCurrent = g.id === appStore.currentGradeId;
+        const count = appStore.lessons.filter(l => l.gradeId === g.id).length;
+        const activeClass = isCurrent
+          ? 'bg-teal-700 text-white font-bold shadow'
+          : 'bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold';
+        const badgeClass = isCurrent
+          ? 'bg-teal-900 text-teal-100'
+          : 'bg-slate-300 text-slate-700';
+
+        return `
+          <button onclick="selectGradeTab('${g.id}')" class="px-3.5 py-1.5 rounded-lg text-xs transition flex items-center gap-1.5 ${activeClass}">
+            <span>📁 ${g.name}</span>
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full ${badgeClass}">${count}</span>
+          </button>
+        `;
+      }).join('');
+
+      const curGrade = getActiveGrade();
+      document.getElementById('current-grade-name-label').textContent = curGrade ? curGrade.name : '';
+    }
+
+    function selectGradeTab(gradeId) {
+      appStore.currentGradeId = gradeId;
+      saveStore();
+      renderGradeTabs();
+      renderLessonCards();
+    }
+
+    function renderLessonCards() {
+      const curGrade = getActiveGrade();
+      const searchKeyword = (document.getElementById('lesson-search-input')?.value || '').trim().toLowerCase();
+      
+      let lessons = appStore.lessons.filter(l => l.gradeId === appStore.currentGradeId);
+      if (searchKeyword) {
+        lessons = lessons.filter(l => l.title.toLowerCase().includes(searchKeyword));
+      }
+
+      document.getElementById('current-grade-count').textContent = `${lessons.length}件`;
+
+      const grid = document.getElementById('lesson-cards-grid');
+      const placeholder = document.getElementById('lesson-empty-placeholder');
+
+      if (lessons.length === 0) {
+        grid.innerHTML = '';
+        placeholder.classList.remove('hidden');
+        return;
+      }
+
+      placeholder.classList.add('hidden');
+      grid.innerHTML = lessons.map(lesson => {
+        const answersCount = lesson.state?.answers?.length || 0;
+        const isAccepting = lesson.state?.isAccepting;
+        const statusBadge = isAccepting 
+          ? '<span class="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">受付中</span>' 
+          : '<span class="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full font-bold">待機/締切</span>';
+
+        return `
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 hover:border-teal-500 hover:shadow-md transition p-4 flex flex-col justify-between space-y-3">
+            <div>
+              <div class="flex justify-between items-start gap-2">
+                <span class="text-[10px] font-bold text-teal-800 bg-teal-50 px-2 py-0.5 rounded border border-teal-200">${curGrade.name}</span>
+                ${statusBadge}
+              </div>
+              <h4 class="font-bold text-slate-800 text-base mt-2 line-clamp-2" title="${lesson.title}">${lesson.title}</h4>
+              <div class="text-[11px] text-slate-400 mt-1 flex items-center gap-3">
+                <span>📅 作成: ${lesson.createdAt || '-'}</span>
+                <span>💬 提出: <strong class="text-teal-700">${answersCount}</strong> 件</span>
+              </div>
+            </div>
+
+            <div class="space-y-2 pt-2 border-t">
+              <button onclick="openTeacherLessonView('${lesson.id}')" class="w-full bg-teal-700 hover:bg-teal-800 text-white font-bold py-2 rounded-lg text-xs shadow flex items-center justify-center gap-1.5 transition">
+                <span>🚀</span> <span>この授業を開始・管理</span>
+              </button>
+              
+              <div class="grid grid-cols-2 gap-2">
+                <button onclick="copyStudentUrl('${lesson.id}')" class="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1 transition">
+                  <span>📋</span> <span>子機リンク</span>
+                </button>
+                <button onclick="showQrModal('${lesson.id}')" class="bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 font-bold py-1.5 rounded-lg text-xs flex items-center justify-center gap-1 transition">
+                  <span>📱</span> <span>QRコード</span>
+                </button>
+              </div>
+
+              <div class="flex justify-end gap-2 pt-1 text-[11px] text-slate-400">
+                <button onclick="openEditLessonTitleModal('${lesson.id}')" class="hover:text-slate-700 hover:underline">名前変更</button>
+                <span>•</span>
+                <button onclick="deleteLessonConfirm('${lesson.id}')" class="text-rose-400 hover:text-rose-600 hover:underline">削除</button>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // =========================================================
+    // 子機URL・QRコード生成（軽量・確実なURL）
+    // =========================================================
+    function getStudentAccessUrl(lessonId) {
+      const loc = window.location;
+      // file:/// の場合は注意喚起のためダミーホストではなく現在のパスを取得
+      let base = `${loc.protocol}//${loc.host}${loc.pathname}`;
+      if (loc.protocol === 'file:') {
+        base = 'https://example.com/science-system.html'; // Web公開時の見本
+      }
+      return `${base}?lesson=${lessonId}&role=student`;
+    }
+
+    function copyStudentUrl(lessonId) {
+      const url = getStudentAccessUrl(lessonId);
+      copyToClipboard(url, '📋 子機用リンクをコピーしました！');
+    }
+
+    function copyCurrentStudentUrl() {
+      if (!activeLessonId) return;
+      copyStudentUrl(activeLessonId);
+    }
+
+    function copyToClipboard(text, successMsg) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+          showToast(successMsg);
+        }).catch(() => {
+          prompt('以下のURLをコピーしてください:', text);
+        });
+      } else {
+        prompt('以下のURLをコピーしてください:', text);
+      }
+    }
+
+    function showQrModal(lessonId) {
+      const lesson = appStore.lessons.find(l => l.id === lessonId);
+      if (!lesson) return;
+
+      const grade = appStore.grades.find(g => g.id === lesson.gradeId);
+      const url = getStudentAccessUrl(lessonId);
+
+      document.getElementById('modal-qr-grade').textContent = grade ? grade.name : '理科';
+      document.getElementById('modal-qr-title').textContent = lesson.title;
+      document.getElementById('modal-qr-url-input').value = url;
+
+      const container = document.getElementById('qrcode-container');
+      container.innerHTML = '';
+
+      if (window.location.protocol === 'file:') {
+        container.innerHTML = `
+          <div class="text-rose-600 text-xs text-left p-3 bg-rose-50 rounded border border-rose-200">
+            ⚠️ <strong>WebサーバーまたはGitHub Pagesで開いてください</strong><br>
+            ローカルファイル（file:///）のままでは生徒の端末から接続できません。無料のGitHub Pagesや学校サーバーに配置するとQRコードで直接読み取れます。
+          </div>
+        `;
+      } else {
+        new QRCode(container, {
+          text: url,
+          width: 200,
+          height: 200,
+          colorDark: "#0f766e",
+          colorLight: "#ffffff",
+          correctLevel: QRCode.CorrectLevel.M
+        });
+      }
+
+      openModal('modal-qr-code');
+    }
+
+    function showQrModalForCurrentLesson() {
+      if (!activeLessonId) return;
+      showQrModal(activeLessonId);
+    }
+
+    function copyModalQrUrl() {
+      const url = document.getElementById('modal-qr-url-input').value;
+      copyToClipboard(url, '📋 子機用リンクをコピーしました！');
+    }
+
+    // =========================================================
+    // 授業の作成・削除
+    // =========================================================
+    function openNewLessonModal() {
+      const select = document.getElementById('new-lesson-grade');
+      select.innerHTML = appStore.grades.map(g => `
+        <option value="${g.id}" ${g.id === appStore.currentGradeId ? 'selected' : ''}>${g.name}</option>
+      `).join('');
+      document.getElementById('new-lesson-title').value = '';
+      openModal('modal-new-lesson');
+    }
+
+    function confirmCreateLesson() {
+      const gradeId = document.getElementById('new-lesson-grade').value;
+      const title = document.getElementById('new-lesson-title').value.trim();
+      const template = document.getElementById('new-lesson-template').value;
+
+      if (!title) {
+        alert('授業名を入力してください');
+        return;
+      }
+
+      const newId = 'lesson_' + Date.now().toString(36);
+      
+      let initialState = {
+        mode: 'individual',
+        isAccepting: false,
+        individualQuestions: [
+          { id: 1, text: "問1: 実験の予想と理由を書きなさい。", modelAnswer: "" },
+          { id: 2, text: "問2: 実験結果から何が分かりましたか。考察を書きなさい。", modelAnswer: "" }
+        ],
+        groupQuestions: [
+          { id: 101, text: "【班の課題】各班のデータを比較し、結論を導き出しなさい。", modelAnswer: "" }
+        ],
+        hints: [
+          { id: 1, title: "ヒント 1: 着眼点", text: "変化前後の数値を比べましょう。" }
+        ],
+        answers: []
+      };
+
+      const newLesson = {
+        id: newId,
+        gradeId: gradeId,
+        title: title,
+        createdAt: new Date().toLocaleDateString('ja-JP'),
+        state: initialState
+      };
+
+      appStore.lessons.unshift(newLesson);
+      appStore.currentGradeId = gradeId;
+      saveStore();
+      closeModal('modal-new-lesson');
+
+      renderGradeTabs();
+      renderLessonCards();
+      showToast(`✨ 新規授業「${title}」を作成しました！`);
+      showQrModal(newId);
+    }
+
+    function deleteLessonConfirm(lessonId) {
+      const lesson = appStore.lessons.find(l => l.id === lessonId);
+      if (!lesson) return;
+      if (confirm(`授業「${lesson.title}」を削除してもよろしいですか？`)) {
+        appStore.lessons = appStore.lessons.filter(l => l.id !== lessonId);
+        saveStore();
+        renderLessonCards();
+        renderGradeTabs();
+        showToast('🗑️ 授業を削除しました');
+      }
+    }
+
+    // =========================================================
+    // 学年フォルダ
+    // =========================================================
+    function openAddGradeModal() {
+      document.getElementById('new-grade-name-input').value = '';
+      openModal('modal-add-grade');
+    }
+
+    function confirmAddGrade() {
+      const name = document.getElementById('new-grade-name-input').value.trim();
+      if (!name) return;
+      const newGradeId = 'grade_' + Date.now().toString(36);
+      appStore.grades.push({ id: newGradeId, name: name });
+      appStore.currentGradeId = newGradeId;
+      saveStore();
+      closeModal('modal-add-grade');
+      renderGradeTabs();
+      renderLessonCards();
+    }
+
+    function editCurrentGradeModal() {
+      const curGrade = getActiveGrade();
+      if (!curGrade) return;
+      document.getElementById('edit-grade-name-input').value = curGrade.name;
+      openModal('modal-edit-grade');
+    }
+
+    function confirmUpdateGradeName() {
+      const curGrade = getActiveGrade();
+      if (!curGrade) return;
+      const newName = document.getElementById('edit-grade-name-input').value.trim();
+      if (!newName) return;
+      curGrade.name = newName;
+      saveStore();
+      closeModal('modal-edit-grade');
+      renderGradeTabs();
+      renderLessonCards();
+    }
+
+    function confirmDeleteGrade() {
+      const curGrade = getActiveGrade();
+      if (!curGrade) return;
+      if (appStore.grades.length <= 1) {
+        alert('最低1つのフォルダが必要です。');
+        return;
+      }
+      appStore.lessons = appStore.lessons.filter(l => l.gradeId !== curGrade.id);
+      appStore.grades = appStore.grades.filter(g => g.id !== curGrade.id);
+      appStore.currentGradeId = appStore.grades[0].id;
+      saveStore();
+      closeModal('modal-edit-grade');
+      renderGradeTabs();
+      renderLessonCards();
+    }
+
+    // =========================================================
+    // 授業操作・進行
+    // =========================================================
+    function setMode(mode) {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      lesson.state.mode = mode;
+
+      document.getElementById('mode-btn-ind').className = mode === 'individual' 
+        ? 'px-3 py-1.5 rounded-lg text-sm font-bold bg-teal-700 text-white shadow' 
+        : 'px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-200 text-slate-700 hover:bg-slate-300';
+      document.getElementById('mode-btn-grp').className = mode === 'group' 
+        ? 'px-3 py-1.5 rounded-lg text-sm font-bold bg-teal-700 text-white shadow' 
+        : 'px-3 py-1.5 rounded-lg text-sm font-bold bg-slate-200 text-slate-700 hover:bg-slate-300';
+      
+      renderTeacherQuestionEditor();
+      renderTeacherHintsEditor();
+      broadcastLessonState();
+    }
+
+    function toggleAccepting(accepting) {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      lesson.state.isAccepting = accepting;
+      if (!accepting) {
+        broadcastToStudents({ type: 'FORCE_CLOSE_COLLECT' });
+      }
+      broadcastLessonState();
+    }
+
+    function toggleTvMode(enable) {
+      isTvModeActive = enable;
+      const controls = document.getElementById('teacher-controls');
+      const tabs = document.getElementById('teacher-tabs');
+      const header = document.getElementById('teacher-header');
+      const exitBar = document.getElementById('tv-exit-bar');
+
+      if (enable) {
+        controls.classList.add('hidden');
+        tabs.classList.add('hidden');
+        header.classList.add('hidden');
+        exitBar.classList.remove('hidden');
+        switchTeacherTab('screen');
+      } else {
+        controls.classList.remove('hidden');
+        tabs.classList.remove('hidden');
+        header.classList.remove('hidden');
+        exitBar.classList.add('hidden');
+      }
+      updateTeacherViews();
+    }
+
+    function resetDataConfirm() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      if (confirm(`現在のフェーズ（${lesson.state.mode === 'individual' ? '個人ワーク' : '班活動'}）の回答を消去しますか？`)) {
+        lesson.state.answers = lesson.state.answers.filter(a => a.mode !== lesson.state.mode);
+        broadcastLessonState();
+        showToast('🗑️ 回答データをリセットしました');
+      }
+    }
+
+    function getActiveQuestions() {
+      const lesson = getActiveLesson();
+      if (!lesson) return [];
+      return lesson.state.mode === 'individual' ? lesson.state.individualQuestions : lesson.state.groupQuestions;
+    }
+
+    function getCurrentModeAnswers() {
+      const lesson = getActiveLesson();
+      if (!lesson) return [];
+      return lesson.state.answers.filter(a => a.mode === lesson.state.mode);
+    }
+
+    function renderTeacherQuestionEditor() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      const container = document.getElementById('questions-editor-list');
+      const questions = getActiveQuestions();
+      container.innerHTML = questions.map((q, idx) => `
+        <div class="p-3 bg-white border rounded-lg space-y-2">
+          <div class="flex justify-between items-center">
+            <span class="font-bold text-teal-800">問${idx + 1} の設定 (${lesson.state.mode === 'individual' ? '個人' : '班活動'})</span>
+            <button onclick="removeQuestion(${idx})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">削除</button>
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-slate-500 mb-1">問題文:</label>
+            <input type="text" id="edit-q-text-${idx}" value="${q.text}" class="w-full p-2 border rounded text-sm">
+          </div>
+          <div>
+            <label class="block text-xs font-bold text-indigo-600 mb-1">模範解答・指導メモ:</label>
+            <input type="text" id="edit-q-model-${idx}" value="${q.modelAnswer || ''}" class="w-full p-2 border border-indigo-200 rounded text-sm bg-indigo-50/30">
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function addQuestion() {
+      const questions = getActiveQuestions();
+      questions.push({ id: Date.now(), text: `問${questions.length + 1}: `, modelAnswer: "" });
+      renderTeacherQuestionEditor();
+    }
+
+    function removeQuestion(index) {
+      const questions = getActiveQuestions();
+      if (questions.length <= 1) { alert('小問は最低1問必要です'); return; }
+      questions.splice(index, 1);
+      renderTeacherQuestionEditor();
+    }
+
+    function renderTeacherHintsEditor() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      const container = document.getElementById('hints-editor-list');
+      container.innerHTML = lesson.state.hints.map((h, idx) => `
+        <div class="p-3 bg-amber-50/60 border border-amber-200 rounded-lg space-y-2">
+          <div class="flex justify-between items-center">
+            <span class="font-bold text-xs text-amber-900">ヒント ${idx + 1}</span>
+            <button onclick="removeHint(${idx})" class="text-rose-500 hover:text-rose-700 text-xs font-bold">削除</button>
+          </div>
+          <div class="flex gap-2">
+            <input type="text" id="edit-hint-title-${idx}" value="${h.title}" class="w-1/3 p-1.5 border rounded text-xs">
+            <input type="text" id="edit-hint-text-${idx}" value="${h.text}" class="w-2/3 p-1.5 border rounded text-xs">
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function addHint() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      lesson.state.hints.push({ id: Date.now(), title: `ヒント ${lesson.state.hints.length + 1}`, text: "" });
+      renderTeacherHintsEditor();
+    }
+
+    function removeHint(index) {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      lesson.state.hints.splice(index, 1);
+      renderTeacherHintsEditor();
+    }
+
+    function saveAndBroadcastSettings() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      const questions = getActiveQuestions();
+      questions.forEach((q, idx) => {
+        const textElem = document.getElementById(`edit-q-text-${idx}`);
+        const modelElem = document.getElementById(`edit-q-model-${idx}`);
+        if (textElem) q.text = textElem.value;
+        if (modelElem) q.modelAnswer = modelElem.value;
+      });
+      lesson.state.hints.forEach((h, idx) => {
+        const titleElem = document.getElementById(`edit-hint-title-${idx}`);
+        const textElem = document.getElementById(`edit-hint-text-${idx}`);
+        if (titleElem) h.title = titleElem.value;
+        if (textElem) h.text = textElem.value;
+      });
+      broadcastLessonState();
+      showToast('✅ 設定を保存し、生徒に配信しました！');
+    }
+
+    function switchTeacherTab(tab) {
+      document.getElementById('tab-screen').classList.toggle('hidden', tab !== 'screen');
+      document.getElementById('tab-by-question').classList.toggle('hidden', tab !== 'by-question');
+      document.getElementById('tab-individual').classList.toggle('hidden', tab !== 'individual');
+
+      const tabs = ['screen', 'by-question', 'individual'];
+      tabs.forEach(t => {
+        const btn = document.getElementById(`tab-btn-${t}`);
+        if (t === tab) {
+          btn.className = 'px-4 py-2 font-bold text-teal-800 border-b-2 border-teal-700 bg-white rounded-t-md text-sm';
+        } else {
+          btn.className = 'px-4 py-2 font-bold text-slate-500 hover:text-slate-800 rounded-t-md text-sm';
+        }
+      });
+    }
+
+    // =========================================================
+    // 画面表示更新
+    // =========================================================
+    function updateAllDisplays() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const tag = document.getElementById('current-mode-tag');
+      if (tag) {
+        tag.textContent = lesson.state.mode === 'individual' ? '👤 個人ワーク' : '👥 班活動';
+        tag.className = lesson.state.mode === 'individual' 
+          ? 'text-xs bg-teal-600 px-2.5 py-1 rounded-full font-bold' 
+          : 'text-xs bg-amber-600 px-2.5 py-1 rounded-full font-bold';
+      }
+
+      updateTeacherViews();
+      updateStudentViews();
+    }
+
+    function updateTeacherViews() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const badge = document.getElementById('teacher-status-badge');
+      if (lesson.state.isAccepting) {
+        badge.textContent = "回答受付中";
+        badge.className = "text-xs px-3 py-1 bg-emerald-100 text-emerald-800 rounded-full font-bold animate-pulse";
+      } else {
+        badge.textContent = "締め切り済";
+        badge.className = "text-xs px-3 py-1 bg-rose-100 text-rose-800 rounded-full font-bold";
+      }
+
+      const currentAnswers = getCurrentModeAnswers();
+      document.getElementById('submit-count').textContent = currentAnswers.length;
+
+      document.getElementById('screen-title-text').textContent = lesson.state.mode === 'individual' 
+        ? `クラス全体の回答状況（40人対応 5×8表示 ｜ 提出: ${currentAnswers.length}/40名）` 
+        : `班活動の回答状況（提出: ${currentAnswers.length}/9班）`;
+
+      const grid = document.getElementById('grid-main-screen');
+      grid.innerHTML = '';
+
+      if (lesson.state.mode === 'individual') {
+        grid.className = "grid grid-cols-5 gap-2.5";
+        const totalSlots = Math.max(40, currentAnswers.length);
+
+        for (let i = 0; i < totalSlots; i++) {
+          const ans = currentAnswers[i];
+          const rank = i + 1;
+
+          if (ans) {
+            const hasPhoto = ans.responses.some(r => r.photo);
+            const displayName = isTvModeActive ? `提出 #${rank}` : `👤 ${ans.name}`;
+            const subLabel = isTvModeActive ? `${ans.time} 着` : `${rank}人目・${ans.time}`;
+
+            grid.innerHTML += `
+              <div onclick="selectAndShowStudent(${lesson.state.answers.indexOf(ans)})" class="p-2.5 bg-teal-50/70 border-2 border-teal-500 rounded-xl shadow-sm hover:border-teal-700 cursor-pointer transition flex flex-col justify-between h-32">
+                <div>
+                  <div class="font-bold text-xs text-teal-950 truncate flex items-center justify-between">
+                    <span class="truncate">${displayName}</span>
+                    ${hasPhoto ? '<span class="text-xs">📸</span>' : ''}
+                  </div>
+                  <div class="text-[10px] text-slate-700 bg-white p-1 rounded border mt-1 line-clamp-2 leading-snug">
+                    ${ans.responses[0]?.answer || '（問1未記入）'}
+                  </div>
+                </div>
+                <div class="text-[9px] text-teal-800 font-bold text-right">${subLabel}</div>
+              </div>
+            `;
+          } else {
+            grid.innerHTML += `
+              <div class="p-2.5 bg-slate-50 border-2 border-dashed border-slate-200 rounded-xl flex flex-col justify-center items-center h-32 text-slate-300">
+                <span class="text-xs font-bold text-slate-400">${rank}人目</span>
+                <span class="text-[10px] mt-1 text-slate-300">待機中...</span>
+              </div>
+            `;
+          }
+        }
+      } else {
+        grid.className = "grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4";
+        for (let b = 1; b <= 9; b++) {
+          const groupName = `${b}班`;
+          const ans = currentAnswers.find(a => a.name === groupName);
+          if (ans) {
+            const hasPhoto = ans.responses.some(r => r.photo);
+            grid.innerHTML += `
+              <div onclick="selectAndShowStudent(${lesson.state.answers.indexOf(ans)})" class="p-4 bg-teal-50/70 border-2 border-teal-600 rounded-xl shadow cursor-pointer transition flex flex-col justify-between h-44">
+                <div>
+                  <div class="font-bold text-base text-teal-950 flex justify-between items-center border-b border-teal-200 pb-1">
+                    <span>👥 ${groupName}</span>
+                    <span class="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded-full font-bold">提出完了 ${hasPhoto ? '📸' : ''}</span>
+                  </div>
+                  <div class="text-xs text-slate-800 bg-white p-2 rounded border mt-2 line-clamp-3">
+                    ${ans.responses[0]?.answer || '（未記入）'}
+                  </div>
+                </div>
+                <div class="text-[10px] text-teal-700 text-right font-bold">提出: ${ans.time}</div>
+              </div>
+            `;
+          } else {
+            grid.innerHTML += `
+              <div class="p-4 bg-slate-50 border-2 border-dashed border-slate-300 rounded-xl flex flex-col justify-center items-center h-44 text-slate-400">
+                <span class="text-base font-bold text-slate-500">👥 ${groupName}</span>
+                <span class="text-xs mt-2 text-slate-400">話し合い中...</span>
+              </div>
+            `;
+          }
+        }
+      }
+
+      const byQContainer = document.getElementById('by-question-content');
+      const questions = getActiveQuestions();
+      byQContainer.innerHTML = questions.map((q, qIdx) => `
+        <div class="border rounded-xl p-4 bg-slate-50 space-y-3">
+          <div class="flex justify-between items-center border-b pb-2">
+            <h3 class="font-bold text-teal-900 text-base">📌 ${q.text}</h3>
+            ${q.modelAnswer ? `<span class="text-xs bg-indigo-100 text-indigo-800 px-2 py-1 rounded font-bold">模範解答: ${q.modelAnswer}</span>` : ''}
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            ${currentAnswers.map(ans => {
+              const resp = ans.responses[qIdx] || {};
+              return `
+                <div class="bg-white p-3 rounded-lg border text-sm space-y-2">
+                  <div class="font-bold text-xs text-teal-800">${ans.name}</div>
+                  <p class="text-slate-700 bg-slate-50 p-2 rounded text-xs min-h-[40px] whitespace-pre-wrap">${resp.answer || '（無記入）'}</p>
+                  ${resp.photo ? `<img src="${resp.photo}" class="h-28 w-full object-cover rounded border">` : ''}
+                </div>
+              `;
+            }).join('') || '<div class="col-span-full text-slate-400 text-xs py-4 text-center">回答はまだありません</div>'}
+          </div>
+        </div>
+      `).join('');
+
+      const select = document.getElementById('teacher-student-select');
+      const curVal = select.value;
+      select.innerHTML = '<option value="">選択してください</option>' +
+        currentAnswers.map((a) => {
+          const globalIdx = lesson.state.answers.indexOf(a);
+          return `<option value="${globalIdx}">${a.name}</option>`;
+        }).join('');
+      if (curVal !== "") select.value = curVal;
+      renderIndividualDetail();
+    }
+
+    function selectAndShowStudent(index) {
+      if (isTvModeActive) {
+        toggleTvMode(false);
+      }
+      switchTeacherTab('individual');
+      const select = document.getElementById('teacher-student-select');
+      select.value = index;
+      renderIndividualDetail();
+    }
+
+    function renderIndividualDetail() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+      const idx = document.getElementById('teacher-student-select').value;
+      const container = document.getElementById('teacher-individual-detail');
+      if (idx === "" || !lesson.state.answers[idx]) {
+        container.innerHTML = '生徒または班を選択すると、全問の記述内容と写真が大きく表示されます。';
+        return;
+      }
+      const ans = lesson.state.answers[idx];
+      container.innerHTML = `
+        <div class="bg-white p-5 rounded-lg border space-y-4">
+          <div class="text-lg font-bold text-teal-900 border-b pb-2 flex justify-between">
+            <span>👤 ${ans.name} の回答 (${ans.mode === 'individual' ? '個人' : '班活動'})</span>
+            <span class="text-xs text-slate-400 font-normal">送信: ${ans.time}</span>
+          </div>
+          <div class="space-y-4">
+            ${ans.responses.map(r => `
+              <div class="border-b pb-3">
+                <div class="text-sm font-bold text-teal-800 mb-1">${r.question}</div>
+                <div class="p-3 bg-slate-50 rounded border text-slate-800 text-sm whitespace-pre-wrap">${r.answer || '（無記入）'}</div>
+                ${r.photo ? `<div class="mt-2"><img src="${r.photo}" class="max-h-72 rounded border shadow"></div>` : ''}
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // =========================================================
+    // 子機（生徒）表示更新
+    // =========================================================
+    function updateStudentViews() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const waiting = document.getElementById('student-waiting-card');
+      const form = document.getElementById('student-form-card');
+      const peerCard = document.getElementById('student-peer-review-card');
+      const btnEdit = document.getElementById('btn-edit-answer');
+
+      const modeBadge = document.getElementById('student-mode-badge');
+      const headerModeBadge = document.getElementById('student-header-mode-badge');
+      const statusBadge = document.getElementById('student-status-badge');
+
+      const modeText = lesson.state.mode === 'individual' ? '👤 個人ワーク' : '👥 班活動';
+      if (modeBadge) modeBadge.textContent = modeText;
+      if (headerModeBadge) headerModeBadge.textContent = modeText;
+
+      if (statusBadge) {
+        statusBadge.textContent = lesson.state.isAccepting ? '受付中' : '締切/待機';
+        statusBadge.className = lesson.state.isAccepting 
+          ? 'text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 animate-pulse' 
+          : 'text-xs font-bold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600';
+      }
+
+      document.getElementById('student-form-title').textContent = lesson.state.mode === 'individual' ? '理科の回答を入力（個人）' : '班の回答を入力（話し合い活動）';
+
+      const currentAnswers = getCurrentModeAnswers();
+
+      if (lesson.state.isAccepting && studentHasSubmitted) {
+        btnEdit.classList.remove('hidden');
+      } else {
+        btnEdit.classList.add('hidden');
+      }
+
+      if (!lesson.state.isAccepting && currentAnswers.length > 0) {
+        waiting.classList.add('hidden');
+        form.classList.add('hidden');
+        peerCard.classList.remove('hidden');
+        document.getElementById('peer-review-title').textContent = '🛑 回答は締め切られました';
+        document.getElementById('peer-review-status-text').textContent = lesson.state.mode === 'individual' ? 'クラスのみんなの回答を確認しましょう（匿名）' : '各班の回答・考察を確認しましょう';
+        renderPeerAnswers();
+      } else if (studentHasSubmitted) {
+        waiting.classList.add('hidden');
+        form.classList.add('hidden');
+        peerCard.classList.remove('hidden');
+        document.getElementById('peer-review-title').textContent = '✅ あなたの回答は送信されました！';
+        document.getElementById('peer-review-status-text').textContent = lesson.state.mode === 'individual' ? '提出された他の回答を参考に見てみましょう（修正も可能です）' : '提出された他の班の回答を見てみましょう（修正も可能です）';
+        renderPeerAnswers();
+      } else if (lesson.state.isAccepting) {
+        waiting.classList.add('hidden');
+        form.classList.remove('hidden');
+        peerCard.classList.add('hidden');
+        renderStudentInputForm();
+      } else {
+        waiting.classList.remove('hidden');
+        form.classList.add('hidden');
+        peerCard.classList.add('hidden');
+      }
+    }
+
+    function renderStudentInputForm() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const nameBox = document.getElementById('student-name-container');
+      const defaultName = lastMyAnswer ? lastMyAnswer.name : '';
+
+      if (lesson.state.mode === 'individual') {
+        nameBox.innerHTML = `
+          <label class="block text-xs font-bold text-slate-600 mb-1">名前（氏名のみ）:</label>
+          <input type="text" id="student-name-field" value="${defaultName}" placeholder="例: 山田 太郎" class="w-full p-2 border rounded-md text-sm">
+        `;
+      } else {
+        nameBox.innerHTML = `
+          <label class="block text-xs font-bold text-slate-600 mb-1">班の選択:</label>
+          <select id="student-name-field" class="w-full p-2 border rounded-md text-sm bg-slate-50 font-bold text-teal-800">
+            ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => {
+              const val = `${n}班`;
+              return `<option value="${val}" ${val === defaultName ? 'selected' : ''}>${val}</option>`;
+            }).join('')}
+          </select>
+        `;
+      }
+
+      const hintsContainer = document.getElementById('student-hints-container');
+      const hintsList = document.getElementById('student-hints-list');
+      if (lesson.state.mode === 'group' && lesson.state.hints && lesson.state.hints.length > 0) {
+        hintsContainer.classList.remove('hidden');
+        hintsList.innerHTML = lesson.state.hints.map(h => `
+          <details class="group bg-amber-50/80 border border-amber-200 rounded-lg p-3 cursor-pointer hover:bg-amber-100/50 transition select-none">
+            <summary class="font-bold text-amber-900 text-xs flex justify-between items-center">
+              <span>💡 ${h.title}</span>
+              <span class="text-[10px] text-amber-600 bg-amber-200/60 px-2 py-0.5 rounded font-normal group-open:hidden">タップで開く ▼</span>
+              <span class="text-[10px] text-amber-600 bg-amber-200/60 px-2 py-0.5 rounded font-normal hidden group-open:inline">閉じる ▲</span>
+            </summary>
+            <div class="mt-2 text-xs text-amber-950 bg-white p-2.5 rounded border border-amber-200/60 whitespace-pre-wrap leading-relaxed">
+              ${h.text}
+            </div>
+          </details>
+        `).join('');
+      } else {
+        hintsContainer.classList.add('hidden');
+      }
+
+      const questions = getActiveQuestions();
+      const qContainer = document.getElementById('student-questions-container');
+      qContainer.innerHTML = questions.map((q, idx) => {
+        const prevAnswer = lastMyAnswer?.responses[idx]?.answer || '';
+        const prevPhoto = lastMyAnswer?.responses[idx]?.photo || tempPhotos[idx] || null;
+        if (prevPhoto) tempPhotos[idx] = prevPhoto;
+
+        return `
+          <div class="border p-4 rounded-xl bg-slate-50 space-y-3">
+            <label class="block font-bold text-slate-800 text-sm">📌 ${q.text}</label>
+            <textarea id="stu-ans-${idx}" rows="2" placeholder="回答を入力..." class="w-full p-2 border rounded-md text-sm">${prevAnswer}</textarea>
+            
+            <div>
+              <label class="block text-xs font-bold text-teal-700 mb-1">📸 写真・スケッチ（任意）</label>
+              <input type="file" accept="image/*" onchange="handleQuestionPhoto(${idx}, this)" class="text-xs text-slate-500 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-teal-50 file:text-teal-700">
+              <div id="preview-box-${idx}" class="mt-2 ${prevPhoto ? '' : 'hidden'}">
+                <img id="preview-img-${idx}" src="${prevPhoto || ''}" class="max-h-40 rounded border shadow-sm">
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('btn-submit-student').textContent = lastMyAnswer ? '修正した回答を送信する' : '回答を送信する';
+    }
+
+    function editMyAnswer() {
+      studentHasSubmitted = false;
+      updateStudentViews();
+    }
+
+    function handleQuestionPhoto(qIndex, inputElem) {
+      const file = inputElem.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const img = new Image();
+        img.onload = function() {
+          const canvas = document.createElement('canvas');
+          const maxW = 500;
+          const scale = maxW / img.width;
+          canvas.width = (img.width > maxW) ? maxW : img.width;
+          canvas.height = (img.width > maxW) ? img.height * scale : img.height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+          const base64 = canvas.toDataURL('image/jpeg', 0.5);
+          tempPhotos[qIndex] = base64;
+
+          const previewBox = document.getElementById(`preview-box-${qIndex}`);
+          const previewImg = document.getElementById(`preview-img-${qIndex}`);
+          previewImg.src = base64;
+          previewBox.classList.remove('hidden');
+        };
+        img.src = e.target.result;
+      };
+      reader.readAsDataURL(file);
+    }
+
+    function submitStudentResponse(isForceClose = false) {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const submitBtn = document.getElementById('btn-submit-student');
+      if (submitBtn) submitBtn.disabled = true;
+
+      let nameField = document.getElementById('student-name-field');
+      let name = nameField ? nameField.value.trim() : '';
+
+      if (!name) {
+        if (isForceClose) {
+          name = lesson.state.mode === 'individual' ? '生徒（途中回収）' : '未選択班';
+        } else {
+          alert('名前または班を入力してください');
+          if (submitBtn) submitBtn.disabled = false;
+          return;
+        }
+      }
+
+      const questions = getActiveQuestions();
+      const responses = questions.map((q, idx) => {
+        const elem = document.getElementById(`stu-ans-${idx}`);
+        return {
+          question: q.text,
+          answer: elem ? elem.value.trim() : '',
+          photo: tempPhotos[idx] || null
+        };
+      });
+
+      if (isForceClose && responses.every(r => !r.answer && !r.photo)) {
+        if (submitBtn) submitBtn.disabled = false;
+        return;
+      }
+
+      const uniqueKey = (lesson.state.mode === 'group') ? name : mySubmissionId;
+
+      const newAns = {
+        submissionKey: uniqueKey,
+        mode: lesson.state.mode,
+        name: name,
+        responses: responses,
+        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+
+      lastMyAnswer = newAns;
+
+      // 親機（先生）へ送信
+      if (studentConnection && studentConnection.open) {
+        studentConnection.send({
+          type: 'STUDENT_SUBMIT',
+          payload: newAns
+        });
+      }
+
+      studentHasSubmitted = true;
+      if (submitBtn) submitBtn.disabled = false;
+      updateStudentViews();
+    }
+
+    function renderPeerAnswers() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const container = document.getElementById('student-peer-grid');
+      const currentAnswers = getCurrentModeAnswers();
+
+      document.getElementById('peer-list-title').textContent = lesson.state.mode === 'individual' 
+        ? '👥 クラスの回答一覧（個人：匿名）' 
+        : '👥 各班の回答一覧（1〜9班）';
+
+      if (currentAnswers.length === 0) {
+        container.innerHTML = '<div class="text-slate-400 text-xs py-4 text-center">まだ回答がありません</div>';
+        return;
+      }
+
+      container.innerHTML = currentAnswers.map((ans, idx) => {
+        const displayName = ans.mode === 'individual' ? `生徒 ${String.fromCharCode(65 + (idx % 26))}` : ans.name;
+        const isMe = (ans.submissionKey === ((ans.mode === 'group') ? ans.name : mySubmissionId));
+
+        return `
+          <div class="p-4 border rounded-xl ${isMe ? 'bg-teal-50 border-teal-400 ring-2 ring-teal-200' : 'bg-slate-50'} space-y-3">
+            <div class="font-bold text-xs text-teal-800 border-b pb-1 flex justify-between">
+              <span>👤 ${displayName} の回答</span>
+              ${isMe ? '<span class="text-xs text-teal-700 bg-teal-100 px-2 py-0.5 rounded font-bold">あなたの回答</span>' : ''}
+            </div>
+            ${ans.responses.map(r => `
+              <div class="text-xs space-y-1">
+                <span class="font-bold text-slate-500">${r.question}</span>
+                <p class="p-2 bg-white rounded border text-slate-800 whitespace-pre-wrap">${r.answer || '（無記入）'}</p>
+                ${r.photo ? `<img src="${r.photo}" class="max-h-40 rounded border mt-1">` : ''}
+              </div>
+            `).join('')}
+          </div>
+        `;
+      }).join('');
+    }
+
+   // =========================================================
+    // PDF出力（見切れ修正版）
+    // =========================================================
+    function downloadPdfReport() {
+      const lesson = getActiveLesson();
+      if (!lesson) return;
+
+      const btn = document.getElementById('btn-pdf');
+      btn.textContent = '⏳ PDF作成中...';
+      btn.disabled = true;
+
+      const grade = appStore.grades.find(g => g.id === lesson.gradeId);
+      const container = document.getElementById('pdf-export-container');
+      const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: 'long', day: 'numeric' });
+
+      const indAnswers = lesson.state.answers.filter(a => a.mode === 'individual');
+      const grpAnswers = lesson.state.answers.filter(a => a.mode === 'group');
+
+      // 幅を750pxに固定し、box-sizingやword-breakを指定して横幅の枠外はみ出しを防ぎます
+      container.innerHTML = `
+        <div style="width: 750px; margin: 0 auto; padding: 20px; box-sizing: border-box; font-family: sans-serif; line-height: 1.5; color: #111; word-break: break-all; background-color: #ffffff;">
+          <div style="border-bottom: 2px solid #0d9488; padding-bottom: 8px; margin-bottom: 20px;">
+            <div style="font-size: 12px; color: #0d9488; font-weight: bold;">${grade ? grade.name : '理科'}</div>
+            <h1 style="font-size: 20px; font-weight: bold; margin: 0; color: #115e59;">${lesson.title} - 活動記録レポート</h1>
+            <div style="font-size: 11px; color: #666; margin-top: 4px;">実施日: ${today} ｜ 個人提出数: ${indAnswers.length}名 ｜ 班提出数: ${grpAnswers.length}班</div>
+          </div>
+
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 12px; border-radius: 6px; margin-bottom: 20px; page-break-inside: auto;">
+            <h2 style="font-size: 14px; font-weight: bold; margin: 0 0 8px 0; color: #0f766e;">【個人ワーク 出題と模範解答】</h2>
+            ${lesson.state.individualQuestions.map((q, i) => `
+              <div style="margin-bottom: 8px; font-size: 11px; page-break-inside: avoid;">
+                <div style="font-weight: bold;">問${i + 1}:${q.text}</div>
+                <div style="color: #4338ca; margin-top: 2px;">💡 模範解答: ${q.modelAnswer || '（なし）'}</div>
+              </div>
+            `).join('')}
+          </div>
+
+          <h2 style="font-size: 14px; font-weight: bold; margin: 0 0 10px 0; color: #334155;">【個人ワーク 生徒の回答一覧（匿名）】</h2>
+          <div style="margin-bottom: 25px;">
+            ${indAnswers.map((ans, idx) => `
+              <div style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px; margin-bottom: 8px; page-break-inside: avoid;">
+                <div style="font-size: 11px; font-weight: bold; color: #475569; margin-bottom: 4px;">生徒 ${String.fromCharCode(65 + (idx % 26))} の回答</div>
+                ${ans.responses.map((r, qIdx) => `
+                  <div style="font-size: 10px; margin-bottom: 4px;">
+                    <span style="font-weight: bold; color: #64748b;">問${qIdx + 1}:</span>
+                    <span>${r.answer || '（無記入）'}</span>
+                    ${r.photo ? `<div style="margin-top: 4px;"><img src="${r.photo}" style="max-height: 90px; border-radius: 4px; border: 1px solid #ccc;"></div>` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            `).join('') || '<div style="font-size: 11px; color: #999;">（個人ワークの回答はありません）</div>'}
+          </div>
+
+          <div style="background-color: #f8fafc; border: 1px solid #cbd5e1; padding: 12px; border-radius: 6px; margin-bottom: 20px; page-break-inside: auto;">
+            <h2 style="font-size: 14px; font-weight: bold; margin: 0 0 8px 0; color: #0f766e;">【班活動 課題と模範解答】</h2>
+            ${lesson.state.groupQuestions.map((q, i) => `
+              <div style="margin-bottom: 8px; font-size: 11px; page-break-inside: avoid;">
+                <div style="font-weight: bold;">課題${i + 1}:${q.text}</div>
+                <div style="color: #4338ca; margin-top: 2px;">💡 模範解答: ${q.modelAnswer || '（なし）'}</div>
+              </div>
+            `).join('')}
+          </div>
+
+          <h2 style="font-size: 14px; font-weight: bold; margin: 0 0 10px 0; color: #334155;">【班活動 各班の回答一覧】</h2>
+          <div>
+            ${grpAnswers.map(ans => `
+              <div style="border: 1px solid #0d9488; border-radius: 6px; padding: 8px; margin-bottom: 8px; background-color: #f0fdfa; page-break-inside: avoid;">
+                <div style="font-size: 11px; font-weight: bold; color: #115e59; margin-bottom: 4px;">👥 ${ans.name} の回答</div>
+                ${ans.responses.map((r, qIdx) => `
+                  <div style="font-size: 10px; margin-bottom: 4px;">
+                    <span style="font-weight: bold; color: #0f766e;">課題${qIdx + 1}:</span>
+                    <span>${r.answer || '（無記入）'}</span>
+                    ${r.photo ? `<div style="margin-top: 4px;"><img src="${r.photo}" style="max-height: 100px; border-radius: 4px; border: 1px solid #0d9488;"></div>` : ''}
+                  </div>
+                `).join('')}
+              </div>
+            `).join('') || '<div style="font-size: 11px; color: #999;">（班活動の回答はありません）</div>'}
+          </div>
+        </div>
+      `;
+
+      container.classList.remove('hidden');
+
+      const safeTitle = lesson.title.replace(/[\\/:*?"<>|]/g, '_');
+      const opt = {
+        margin:       [10, 10, 10, 10], // 上下左右マージン
+        filename:     `${safeTitle}_授業レポート_${new Date().toISOString().slice(0,10)}.pdf`,
+        image:        { type: 'jpeg', quality: 0.95 },
+        html2canvas:  { scale: 2, useCORS: true, logging: false },
+        jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        // 改ページ制御を追加
+        pagebreak:    { mode: ['avoid-all', 'css', 'legacy'] }
+      };
+
+      html2pdf().set(opt).from(container).save().then(() => {
+        container.classList.add('hidden');
+        btn.textContent = '📥 PDF直接ダウンロード';
+        btn.disabled = false;
+        showToast('📄 PDFレポートを出力しました！');
+      }).catch(err => {
+        alert('PDF作成中にエラーが発生しました: ' + err);
+        container.classList.add('hidden');
+        btn.textContent = '📥 PDF直接ダウンロード';
+        btn.disabled = false;
+      });
+    }
+
+    // =========================================================
+    // UIヘルパー
+    // =========================================================
+    function openModal(id) {
+      document.getElementById(id).classList.remove('hidden');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.add('hidden');
+    }
+
+    function showToast(message) {
+      const container = document.getElementById('toast-container');
+      const toast = document.createElement('div');
+      toast.className = 'bg-slate-900/90 text-white text-xs font-bold px-4 py-2.5 rounded-lg shadow-xl border border-slate-700 pointer-events-auto flex items-center gap-2 transform transition-all duration-300 translate-y-3 opacity-0';
+      toast.innerHTML = `<span>${message}</span>`;
+      container.appendChild(toast);
+
+      setTimeout(() => {
+        toast.classList.remove('translate-y-3', 'opacity-0');
+      }, 10);
+
+      setTimeout(() => {
+        toast.classList.add('translate-y-3', 'opacity-0');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+  </script>
+</body>
+</html>
